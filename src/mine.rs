@@ -47,14 +47,14 @@ impl Miner {
             if self.needs_reset().await {
                 ixs.push(ore::instruction::reset(signer.pubkey()));
             }
-            ixs.push(ore::instruction::mine(
-                signer.pubkey(),
-                find_bus(),
-                solution,
-            ));
-            self.send_and_confirm(&ixs, ComputeBudget::Fixed(500_000), false)
-                .await
-                .ok();
+            // ixs.push(ore::instruction::mine(
+            //     signer.pubkey(),
+            //     find_bus(),
+            //     solution,
+            // ));
+            // self.send_and_confirm(&ixs, ComputeBudget::Fixed(500_000), false)
+            //     .await
+            //     .ok();
         }
     }
 
