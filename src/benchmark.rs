@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{mpsc::channel, Arc},
+    time::Instant,
+};
+use threadpool::ThreadPool;
 
 use drillx::equix;
 use solana_rpc_client::spinner;
@@ -20,54 +24,57 @@ impl Miner {
             TEST_DURATION
         ));
         let core_ids = core_affinity::get_core_ids().unwrap();
-        let handles: Vec<_> = core_ids
-            .into_iter()
-            .map(|i| {
-                std::thread::spawn({
-                    move || {
-                        let timer = Instant::now();
-                        let first_nonce = u64::MAX
-                            .saturating_div(args.cores)
-                            .saturating_mul(i.id as u64);
-                        let mut nonce = first_nonce;
-                        let mut memory = equix::SolverMemory::new();
-                        loop {
-                            // Return if core should not be used
-                            if (i.id as u64).ge(&args.cores) {
-                                return 0;
-                            }
+        let num_cores = core_ids.len();
+        let pool = ThreadPool::new(core_ids.len());
+        let (tx, rx) = channel();
 
-                            // Pin to core
-                            let _ = core_affinity::set_for_current(i);
+        for i in core_ids {
+            pool.execute({
+                let tx = tx.clone();
+                move || {
+                    let timer = Instant::now();
+                    let first_nonce = u64::MAX
+                        .saturating_div(args.cores)
+                        .saturating_mul(i.id as u64);
+                    let mut nonce = first_nonce;
+                    let mut memory = equix::SolverMemory::new();
+                    loop {
+                        // Return if core should not be used
+                        // if (i.id as u64).ge(&args.cores) {
+                        //     tx.send(0).unwrap();
+                        // }
 
-                            // Create hash
-                            let _hx = drillx::hash_with_memory(
-                                &mut memory,
-                                &challenge,
-                                &nonce.to_le_bytes(),
-                            );
+                        // // Pin to core
+                        // let _ = core_affinity::set_for_current(i);
 
-                            // Increment nonce
-                            nonce += 1;
+                        // Create hash
+                        let _hx =
+                            drillx::hash_with_memory(&mut memory, &challenge, &nonce.to_le_bytes());
 
-                            // Exit if time has elapsed
-                            if (timer.elapsed().as_secs() as i64).ge(&TEST_DURATION) {
-                                break;
-                            }
+                        // Increment nonce
+                        nonce += 1;
+
+                        // Exit if time has elapsed
+                        if (timer.elapsed().as_secs() as i64).ge(&TEST_DURATION) {
+                            break;
                         }
-
-                        // Return hash count
-                        nonce - first_nonce
                     }
-                })
+
+                    // Return hash count
+                    tx.send(nonce - first_nonce).unwrap();
+                }
             })
-            .collect();
+        }
 
         // Join handles and return best nonce
         let mut total_nonces = 0;
-        for h in handles {
-            if let Ok(count) = h.join() {
-                total_nonces += count;
+        let mut total_recv = 0;
+
+        while let Ok(count) = rx.recv() {
+            total_nonces += count;
+            total_recv += 1;
+            if total_recv == num_cores {
+                break;
             }
         }
 
